@@ -1,0 +1,1 @@
+Rename this folder to be models and add the llama-2-7b-chat.Q4_0.gguf model into this folder
