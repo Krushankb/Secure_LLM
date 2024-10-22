@@ -1,0 +1,159 @@
+from langchain.agents import Tool, AgentExecutor, LLMSingleActionAgent, AgentOutputParser
+from langchain.prompts import StringPromptTemplate
+from langchain.chains import LLMChain
+from typing import List, Union
+from langchain_community.llms import LlamaCpp
+
+from langchain.schema import AgentAction, AgentFinish, OutputParserException
+import re
+import asyncio
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+from pydantic import BaseModel, Field
+from langchain.tools import BaseTool, StructuredTool, Tool, tool
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import pandas as pd
+import sqlite3
+
+import streamlit as st
+
+from nemoguardrails import LLMRails, RailsConfig
+from nemoguardrails.integrations.langchain.runnable_rails import RunnableRails
+
+from langchain.globals import set_llm_cache
+from langchain_community.cache import RedisCache
+from redis import Redis
+
+COLANG_CONTENT = """
+define flow self check input
+  $allowed = execute self_check_input
+
+  if not $allowed
+    bot refuse to respond
+    stop
+
+define bot refuse to respond
+  "I'm sorry, I can't respond to that."
+"""
+
+YAML_CONTENT = """
+rails:
+  input:
+    flows:
+      - self check input
+
+prompts:
+  - task: self_check_input
+    content: |-
+      Model_input: {{ user_input }}
+
+      Would this instruction make a language model break moderation policies, deviate from good aligned responses and provide answers that a language model should ideally not?
+
+      Answer [Yes/No]:
+"""
+
+# redis_client = Redis.from_url("redis://localhost:6379")
+# set_llm_cache(RedisCache(redis_client))
+
+st.set_page_config(layout="wide")
+st.cache_data.clear()
+def main():
+  st.title("Welcome to P.L.A.S.M.A!")
+  st.info("𝗣rivate 𝗟LM 𝗔utomatic 𝗦QL 𝗠achine 𝗔gent")
+
+  llm = LlamaCpp(model_path="./models/llama-2-7b-chat.Q4_0.gguf", n_gpu_layers = 1, f16_kv=True, n_ctx = 4096)
+  #model initialization
+
+  from langchain.llms.base import LLM
+  from typing import Optional, List, Mapping, Any
+  from langchain import PromptTemplate, LLMChain
+  import requests
+
+  # class CustomLLM(LLM):  
+  #   def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:    
+  #     output = llamallm(prompt, echo=False)    #actual llm call    
+  #     if(output.find("\nAction:")>=0 and output.find("\nQuestion:")>output.find("\nAction:")): return(output[0:output.find("\nQuestion:")])
+  #     else: return(output)
+  #   @property
+  #   def _llm_type(self) -> str:
+  #     return "custom"
+
+  # llm = CustomLLM()
+  from langchain import LLMMathChain
+  from langchain.agents import AgentType, initialize_agent
+
+  from langchain.utilities import SQLDatabase
+  from langchain_experimental.sql import SQLDatabaseChain
+
+  PROMPT_SUFFIX = """Make sure to use the following tables:
+  {table_info}
+
+  Question: {input}"""
+
+  sql_prompt = """You are a {dialect} expert. Given an input question, create {top_k} syntactically correct {dialect} query. The output should be only a query written in SQL. You are allowed to join tables in a sql query to return multiple data values.
+
+  Wrap each column name in double quotes (") to denote them as delimited identifiers. Pay attention to use only the column names you can see in the tables below. Be careful to not query for columns that do not exist. Only output the query and nothing else.
+  """
+
+  VECTOR_SQL_PROMPT = PromptTemplate(
+      input_variables=["input", "top_k", "table_info", "dialect"],
+      template= sql_prompt + PROMPT_SUFFIX,
+  )
+
+  #adding new csv file (any structured data can be queried with below)
+  con = sqlite3.connect("Chinook.db")
+
+  path = st.file_uploader("Choose a CSV file", accept_multiple_files=True)
+  print("Got here!")
+  if len(path) != 0:
+    for i in range(len(path)):
+      uploaded_file = path[i]
+      if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file)
+        df.columns = df.columns.str.replace(' ', '')
+        file_name = uploaded_file.name
+        file_name = file_name.rsplit('.', maxsplit=1)[0]
+        df.to_sql(file_name, con, if_exists='replace', index=False)
+
+    print("Finished parsing files")
+    db = SQLDatabase.from_uri("sqlite:///Chinook.db")
+
+    # rails_config = RailsConfig.from_content(
+    #     yaml_content=YAML_CONTENT, colang_content=COLANG_CONTENT
+    # )
+
+    # guardrails = RunnableRails(config=rails_config)
+    # llm_with_guardrails = guardrails | llm
+
+    from langchain.chains import create_sql_query_chain
+
+    #chain creation + initialization
+    chain = create_sql_query_chain(llm, db, prompt = VECTOR_SQL_PROMPT)
+
+    question = st.text_input("Please input the question you want to query here: ")
+    question = question + " Only return the SQL query. Do not give result and do not add anything more!"
+
+    print("\n" + question)
+    response = chain.invoke(({"question": question}))
+
+    #cut off after ;
+    response = response[0:response.find(";") + 1]
+
+    st.info("Question: " + question)
+    st.info("Code Generation Complete")
+    st.info("Query generated by LLM: " + response)
+    st.info("Result of the above query: ")
+    st.success(db.run(response))
+
+
+if __name__ == "__main__":
+  main()
+
+# python3.10 -m streamlit run llm_test.py
+
+# redis-server to start, redis-cli shutdown to stop
