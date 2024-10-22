@@ -1,0 +1,17 @@
+multi-user setup, rags, use case: interconnecting tables, reinforcement learning (improve accuracy of model)
+
+
+⁃	Use the output of the sql code to summarize  
+
+
+
+⁃	Configuring my code 
+⁃	Plugin directly S3 bucket
+
+⁃	Vector store
+⁃	Injection layer to create knowledge base (look into)
+⁃	AGI
+-   Connecting to Cloud (AWS)
+
+- Look into healthcare data (Member, claims)
+    - Can get the data dump from gcp
